@@ -1,6 +1,7 @@
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
+import mongoose from 'mongoose';
 import { User, MenuItem, Order, OrderStatus, Category, CartItem } from './src/types.js';
 
 const DB_DIR = path.join(process.cwd(), 'data');
@@ -73,14 +74,14 @@ const DEFAULT_MENU: MenuItem[] = [
     nameAr: 'حمام محشي أرز مميز',
     nameEn: 'Signature Stuffed Pigeon',
     descriptionAr: 'زوج من الحمام الفاخر محشي بالأرز المتبل بخلطة الكبد والقوانص والبهارات الخاصة، محمر ومقرمش بالسمن البلدي.',
-    descriptionEn: 'A pair of premium pigeons stuffed with seasoned rice, giblets, and aromatic spices, roasted crispy in authentic clarified butter.',
+    descriptionEn: 'A pair of pigeons stuffed with seasoned rice, giblets, and aromatic spices, roasted crispy in authentic clarified butter.',
     price: 380,
     image: 'https://images.unsplash.com/photo-1604908176997-125f25cc6f3d?w=600&auto=format&fit=crop&q=80',
     category: 'pots'
   },
   {
     id: 'm7',
-    nameAr: 'سلطة أبو قورة الخضراء المميزة',
+    nameAr: 'سلطة أبو قورة الخضراء المميزه',
     nameEn: 'Abu Qura Signature Green Salad',
     descriptionAr: 'مزيج منعش من الجرجير، الطماطم، الخيار، الفجل، والنعناع الأخضر، متبل بالليمون، زيت الزيتون ودبس الرمان والخبز المقرمش.',
     descriptionEn: 'Crisp arugula, tomatoes, cucumbers, radish, and fresh mint, tossed with lemon dressing, olive oil, sweet pomegranate molasses, and crispy bread.',
@@ -112,7 +113,7 @@ const DEFAULT_MENU: MenuItem[] = [
     id: 'm10',
     nameAr: 'عصير ليمون بالنعناع فريش',
     nameEn: 'Fresh Mint Lemonade',
-    descriptionAr: 'ليمون طازج معصور بارد مع أوراق النعناع البري ومكعبات الثلج لانتعاش فوري.',
+    descriptionAr: 'ليمون طازج معسور بارد مع أوراق النعناع البري ومكعبات الثلج لانتعاش فوري.',
     descriptionEn: 'Freshly squeezed lemon juice cold-blended with organic mint leaves and crushed ice for instant refreshment.',
     price: 55,
     image: 'https://images.unsplash.com/photo-1513558161293-cdaf765ed2fd?w=600&auto=format&fit=crop&q=80',
@@ -130,7 +131,7 @@ interface DataSchema {
   };
 }
 
-// Ensure database file and directory exist
+// Ensure database file and directory exist for fallback
 function initDB(): DataSchema {
   if (!fs.existsSync(DB_DIR)) {
     fs.mkdirSync(DB_DIR, { recursive: true });
@@ -139,7 +140,6 @@ function initDB(): DataSchema {
   if (!fs.existsSync(DB_FILE)) {
     const initialData: DataSchema = {
       users: [
-        // Pre-seeded Admin account
         {
           id: 'admin-1',
           username: 'Abu-Qura',
@@ -161,7 +161,6 @@ function initDB(): DataSchema {
   try {
     const raw = fs.readFileSync(DB_FILE, 'utf-8');
     const parsed = JSON.parse(raw);
-    // Auto-seed admin and categories if missing
     if (!parsed.users) parsed.users = [];
     if (!parsed.orders) parsed.orders = [];
     if (!parsed.menu || parsed.menu.length === 0) parsed.menu = DEFAULT_MENU;
@@ -182,10 +181,8 @@ function initDB(): DataSchema {
       });
     }
     fs.writeFileSync(DB_FILE, JSON.stringify(parsed, null, 2), 'utf-8');
-
     return parsed;
   } catch (err) {
-    console.error('Error reading DB, resetting', err);
     const fallbackData: DataSchema = {
       users: [
         {
@@ -210,9 +207,6 @@ function initDB(): DataSchema {
 // In-memory data copy synced to disk
 let dbCache: DataSchema = initDB();
 
-// Highly-efficient asynchronous non-blocking write queue
-// Guarantees atomic writes (via temp file) to eliminate database corruption risks under extreme concurrent traffic,
-// while avoiding Express-blocking synchronous file operations.
 let isWriting = false;
 let writePending = false;
 
@@ -243,120 +237,319 @@ function saveToDisk() {
   saveToDiskAsync();
 }
 
+// ==========================================
+// MONGODB SCHEMAS & CONFIG
+// ==========================================
+const MONGODB_URI = process.env.MONGODB_URI;
+let isMongoConnected = false;
+
+// 1. User Schema
+const UserSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  username: { type: String, required: true, unique: true },
+  role: { type: String, required: true },
+  createdAt: { type: String, required: true },
+  phone: String,
+  whatsapp: String,
+  address: String,
+  latitude: Number,
+  longitude: Number
+});
+const UserModel = (mongoose.models.User || mongoose.model('User', UserSchema)) as any;
+
+// 2. Category Schema
+const CategorySchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  nameAr: { type: String, required: true },
+  nameEn: { type: String, required: true }
+});
+const CategoryModel = (mongoose.models.Category || mongoose.model('Category', CategorySchema)) as any;
+
+// 3. MenuItem Schema
+const MenuItemSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  nameAr: { type: String, required: true },
+  nameEn: { type: String, required: true },
+  descriptionAr: { type: String, default: '' },
+  descriptionEn: { type: String, default: '' },
+  price: { type: Number, required: true },
+  image: { type: String, required: true },
+  category: { type: String, required: true },
+  available: { type: Boolean, default: true }
+});
+const MenuItemModel = (mongoose.models.MenuItem || mongoose.model('MenuItem', MenuItemSchema)) as any;
+
+// 4. Order Schema
+const OrderSchema = new mongoose.Schema({
+  id: { type: String, required: true, unique: true },
+  userId: { type: String, required: true },
+  username: { type: String, required: true },
+  items: { type: Array, required: true },
+  total: { type: Number, required: true },
+  status: { type: String, required: true },
+  notes: String,
+  createdAt: { type: String, required: true },
+  updatedAt: { type: String, required: true },
+  phone: String,
+  whatsapp: String,
+  address: String,
+  latitude: Number,
+  longitude: Number
+});
+const OrderModel = (mongoose.models.Order || mongoose.model('Order', OrderSchema)) as any;
+
+// 5. Settings Schema
+const SettingsSchema = new mongoose.Schema({
+  adminPhone: { type: String, default: '01120751465' }
+});
+const SettingsModel = (mongoose.models.Settings || mongoose.model('Settings', SettingsSchema)) as any;
+
+// Seeding helper to guarantee default menu, categories, settings and admin on cloud dbs
+async function seedMongoData() {
+  try {
+    const adminCount = await UserModel.countDocuments({ role: 'admin' });
+    if (adminCount === 0) {
+      await UserModel.create({
+        id: 'admin-1',
+        username: 'Abu-Qura',
+        role: 'admin',
+        createdAt: new Date().toISOString()
+      });
+      console.log('Successfully pre-seeded primary Admin account inside MongoDB Cluster.');
+    }
+
+    const catCount = await CategoryModel.countDocuments();
+    if (catCount === 0) {
+      await CategoryModel.insertMany(DEFAULT_CATEGORIES);
+      console.log('Successfully pre-seeded Egyptian culinary categories inside MongoDB.');
+    }
+
+    const menuCount = await MenuItemModel.countDocuments();
+    if (menuCount === 0) {
+      await MenuItemModel.insertMany(DEFAULT_MENU.map(m => ({
+        ...m,
+        available: m.available !== false
+      })));
+      console.log('Successfully pre-seeded authentic rural menu items inside MongoDB.');
+    }
+
+    const settingsCount = await SettingsModel.countDocuments();
+    if (settingsCount === 0) {
+      await SettingsModel.create({ adminPhone: '01120751465' });
+      console.log('Successfully pre-seeded default general settings inside MongoDB.');
+    }
+  } catch (err) {
+    console.error('Error pre-seeding MongoDB cluster default data:', err);
+  }
+}
+
+if (MONGODB_URI) {
+  mongoose.connect(MONGODB_URI)
+    .then(async () => {
+      console.log('✅ Connected successfully to persistent cloud MongoDB Cluster.');
+      isMongoConnected = true;
+      await seedMongoData();
+    })
+    .catch((err) => {
+      console.error('❌ Failed to connect to MongoDB, falling back to local file-system JSON database:', err);
+      isMongoConnected = false;
+    });
+} else {
+  console.log('⚠️ MONGODB_URI not found. Running under high-performance local file-system storage (data/db.json).');
+}
+
+// ==========================================
+// UNIFIED DYNAMIC DATABASE CONTROLLER
+// ==========================================
 export const DatabaseService = {
   // --- USERS ---
-  getUsers(): User[] {
+  async getUsers(): Promise<User[]> {
+    if (isMongoConnected) {
+      const docs = await UserModel.find({}).lean();
+      return docs as unknown as User[];
+    }
     return dbCache.users;
   },
 
-  findUserByName(username: string): User | undefined {
+  async findUserByName(username: string): Promise<User | undefined> {
+    if (isMongoConnected) {
+      const doc = await UserModel.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } }).lean();
+      return doc ? (doc as unknown as User) : undefined;
+    }
     return dbCache.users.find(u => u.username.toLowerCase() === username.toLowerCase());
   },
 
-  findUserById(id: string): User | undefined {
+  async findUserById(id: string): Promise<User | undefined> {
+    if (isMongoConnected) {
+      const doc = await UserModel.findOne({ id }).lean();
+      return doc ? (doc as unknown as User) : undefined;
+    }
     return dbCache.users.find(u => u.id === id);
   },
 
-  createUser(username: string): User {
-    const existing = this.findUserByName(username);
+  async createUser(username: string): Promise<User> {
+    const existing = await this.findUserByName(username);
     if (existing) {
       throw new Error('اسم المستخدم موجود بالفعل');
     }
     const newUser: User = {
-      id: 'usr_' + crypto.randomBytes(5).toString('hex'), // Secure, collision-free crypto random identifier
+      id: 'usr_' + crypto.randomBytes(5).toString('hex'),
       username,
       role: 'user',
       createdAt: new Date().toISOString()
     };
-    dbCache.users.push(newUser);
-    saveToDisk();
+
+    if (isMongoConnected) {
+      await UserModel.create(newUser);
+    } else {
+      dbCache.users.push(newUser);
+      saveToDisk();
+    }
     return newUser;
   },
 
   // --- MENU ---
-  getMenu(): MenuItem[] {
+  async getMenu(): Promise<MenuItem[]> {
+    if (isMongoConnected) {
+      const docs = await MenuItemModel.find({}).lean();
+      return docs as unknown as MenuItem[];
+    }
     return dbCache.menu;
   },
 
-  createMenuItem(item: Omit<MenuItem, 'id'>): MenuItem {
+  async createMenuItem(item: Omit<MenuItem, 'id'>): Promise<MenuItem> {
     const newItem: MenuItem = {
       ...item,
       id: 'm_' + crypto.randomBytes(5).toString('hex')
     };
-    dbCache.menu.push(newItem);
-    saveToDisk();
+
+    if (isMongoConnected) {
+      await MenuItemModel.create(newItem);
+    } else {
+      dbCache.menu.push(newItem);
+      saveToDisk();
+    }
     return newItem;
   },
 
-  updateMenuItem(id: string, updated: Partial<MenuItem>): MenuItem {
-    const index = dbCache.menu.findIndex(item => item.id === id);
-    if (index === -1) {
-      throw new Error('الصنف غير موجود');
+  async updateMenuItem(id: string, updated: Partial<MenuItem>): Promise<MenuItem> {
+    if (isMongoConnected) {
+      const doc = await MenuItemModel.findOneAndUpdate(
+        { id },
+        { $set: updated },
+        { new: true }
+      ).lean();
+      if (!doc) {
+        throw new Error('الصنف غير موجود');
+      }
+      return doc as unknown as MenuItem;
+    } else {
+      const index = dbCache.menu.findIndex(item => item.id === id);
+      if (index === -1) {
+        throw new Error('الصنف غير موجود');
+      }
+      dbCache.menu[index] = {
+        ...dbCache.menu[index],
+        ...updated,
+        id // Immutable ID
+      };
+      saveToDisk();
+      return dbCache.menu[index];
     }
-    dbCache.menu[index] = {
-      ...dbCache.menu[index],
-      ...updated,
-      id // Ensure ID remains immutable
-    };
-    saveToDisk();
-    return dbCache.menu[index];
   },
 
-  deleteMenuItem(id: string): void {
-    dbCache.menu = dbCache.menu.filter(item => item.id !== id);
-    saveToDisk();
+  async deleteMenuItem(id: string): Promise<void> {
+    if (isMongoConnected) {
+      await MenuItemModel.deleteOne({ id });
+    } else {
+      dbCache.menu = dbCache.menu.filter(item => item.id !== id);
+      saveToDisk();
+    }
   },
 
   // --- CATEGORIES ---
-  getCategories(): Category[] {
+  async getCategories(): Promise<Category[]> {
+    if (isMongoConnected) {
+      const docs = await CategoryModel.find({}).lean();
+      return docs as unknown as Category[];
+    }
     if (!dbCache.categories) {
       dbCache.categories = [...DEFAULT_CATEGORIES];
     }
     return dbCache.categories;
   },
 
-  createCategory(nameAr: string, nameEn: string): Category {
+  async createCategory(nameAr: string, nameEn: string): Promise<Category> {
     const id = 'cat_' + crypto.randomBytes(5).toString('hex');
     const newCategory: Category = { id, nameAr, nameEn };
-    if (!dbCache.categories) {
-      dbCache.categories = [...DEFAULT_CATEGORIES];
+
+    if (isMongoConnected) {
+      await CategoryModel.create(newCategory);
+    } else {
+      if (!dbCache.categories) {
+        dbCache.categories = [...DEFAULT_CATEGORIES];
+      }
+      dbCache.categories.push(newCategory);
+      saveToDisk();
     }
-    dbCache.categories.push(newCategory);
-    saveToDisk();
     return newCategory;
   },
 
-  updateCategory(id: string, nameAr: string, nameEn: string): Category {
-    if (!dbCache.categories) {
-      dbCache.categories = [...DEFAULT_CATEGORIES];
+  async updateCategory(id: string, nameAr: string, nameEn: string): Promise<Category> {
+    if (isMongoConnected) {
+      const doc = await CategoryModel.findOneAndUpdate(
+        { id },
+        { $set: { nameAr, nameEn } },
+        { new: true }
+      ).lean();
+      if (!doc) {
+        throw new Error('القسم غير موجود');
+      }
+      return doc as unknown as Category;
+    } else {
+      if (!dbCache.categories) {
+        dbCache.categories = [...DEFAULT_CATEGORIES];
+      }
+      const index = dbCache.categories.findIndex(cat => cat.id === id);
+      if (index === -1) {
+        throw new Error('القسم غير موجود');
+      }
+      dbCache.categories[index] = { id, nameAr, nameEn };
+      saveToDisk();
+      return dbCache.categories[index];
     }
-    const index = dbCache.categories.findIndex(cat => cat.id === id);
-    if (index === -1) {
-      throw new Error('القسم غير موجود');
-    }
-    dbCache.categories[index] = { id, nameAr, nameEn };
-    saveToDisk();
-    return dbCache.categories[index];
   },
 
-  deleteCategory(id: string): void {
-    if (!dbCache.categories) {
-      dbCache.categories = [...DEFAULT_CATEGORIES];
+  async deleteCategory(id: string): Promise<void> {
+    if (isMongoConnected) {
+      await CategoryModel.deleteOne({ id });
+    } else {
+      if (!dbCache.categories) {
+        dbCache.categories = [...DEFAULT_CATEGORIES];
+      }
+      dbCache.categories = dbCache.categories.filter(cat => cat.id !== id);
+      saveToDisk();
     }
-    dbCache.categories = dbCache.categories.filter(cat => cat.id !== id);
-    saveToDisk();
   },
 
   // --- ORDERS ---
-  getOrders(): Order[] {
+  async getOrders(): Promise<Order[]> {
+    if (isMongoConnected) {
+      const docs = await OrderModel.find({}).sort({ createdAt: -1 }).lean();
+      return docs as unknown as Order[];
+    }
     return dbCache.orders;
   },
 
-  getUserOrders(userId: string): Order[] {
+  async getUserOrders(userId: string): Promise<Order[]> {
+    if (isMongoConnected) {
+      const docs = await OrderModel.find({ userId }).sort({ createdAt: -1 }).lean();
+      return docs as unknown as Order[];
+    }
     return dbCache.orders.filter(o => o.userId === userId);
   },
 
-  createOrder(
+  async createOrder(
     userId: string, 
     username: string, 
     items: CartItem[], 
@@ -366,19 +559,18 @@ export const DatabaseService = {
     address?: string,
     latitude?: number,
     longitude?: number
-  ): Order {
-    // SECURITY HARDENING: Always calculate total price from server-side trusted menu database,
-    // protecting against malicious client-side price tampering.
+  ): Promise<Order> {
+    // SECURITY HARDENING: Always calculate total price from server-side trusted menu database
+    const currentMenu = await this.getMenu();
     const total = items.reduce((sum, item) => {
-      const dbItem = dbCache.menu.find(m => m.id === item.menuItem.id);
+      const dbItem = currentMenu.find(m => m.id === item.menuItem.id);
       const itemPrice = dbItem ? dbItem.price : item.menuItem.price;
       const extrasPrice = item.extras ? item.extras.reduce((s, ex) => s + ex.price, 0) : 0;
       return sum + ((itemPrice + extrasPrice) * item.quantity);
     }, 0);
 
-    // Deep copy and assign server-trusted pricing to the item records
     const verifiedItems = items.map(item => {
-      const dbItem = dbCache.menu.find(m => m.id === item.menuItem.id);
+      const dbItem = currentMenu.find(m => m.id === item.menuItem.id);
       return {
         ...item,
         menuItem: {
@@ -404,86 +596,168 @@ export const DatabaseService = {
       latitude,
       longitude
     };
-    dbCache.orders.unshift(newOrder); // Add to beginning
 
-    // Also auto-update user profile defaults for seamless future orders
-    const user = dbCache.users.find(u => u.id === userId);
-    if (user) {
-      if (phone) user.phone = phone;
-      if (whatsapp) user.whatsapp = whatsapp;
-      if (address) user.address = address;
-      if (latitude !== undefined) user.latitude = latitude;
-      if (longitude !== undefined) user.longitude = longitude;
+    if (isMongoConnected) {
+      await OrderModel.create(newOrder);
+      await UserModel.findOneAndUpdate(
+        { id: userId },
+        { 
+          $set: {
+            ...(phone && { phone }),
+            ...(whatsapp && { whatsapp }),
+            ...(address && { address }),
+            ...(latitude !== undefined && { latitude }),
+            ...(longitude !== undefined && { longitude })
+          }
+        }
+      );
+    } else {
+      dbCache.orders.unshift(newOrder);
+      const user = dbCache.users.find(u => u.id === userId);
+      if (user) {
+        if (phone) user.phone = phone;
+        if (whatsapp) user.whatsapp = whatsapp;
+        if (address) user.address = address;
+        if (latitude !== undefined) user.latitude = latitude;
+        if (longitude !== undefined) user.longitude = longitude;
+      }
+      saveToDisk();
     }
 
-    saveToDisk();
     return newOrder;
   },
 
-  updateOrderStatus(orderId: string, status: OrderStatus): Order {
-    const order = dbCache.orders.find(o => o.id === orderId);
-    if (!order) {
-      throw new Error('الطلب غير موجود');
+  async updateOrderStatus(orderId: string, status: OrderStatus): Promise<Order> {
+    if (isMongoConnected) {
+      const doc = await OrderModel.findOneAndUpdate(
+        { id: orderId },
+        { $set: { status, updatedAt: new Date().toISOString() } },
+        { new: true }
+      ).lean();
+      if (!doc) {
+        throw new Error('الطلب غير موجود');
+      }
+      return doc as unknown as Order;
+    } else {
+      const order = dbCache.orders.find(o => o.id === orderId);
+      if (!order) {
+        throw new Error('الطلب غير موجود');
+      }
+      order.status = status;
+      order.updatedAt = new Date().toISOString();
+      saveToDisk();
+      return order;
     }
-    order.status = status;
-    order.updatedAt = new Date().toISOString();
-    saveToDisk();
-    return order;
   },
 
-  deleteOrder(orderId: string): void {
-    dbCache.orders = dbCache.orders.filter(o => o.id !== orderId);
-    saveToDisk();
+  async deleteOrder(orderId: string): Promise<void> {
+    if (isMongoConnected) {
+      await OrderModel.deleteOne({ id: orderId });
+    } else {
+      dbCache.orders = dbCache.orders.filter(o => o.id !== orderId);
+      saveToDisk();
+    }
   },
 
   // --- SETTINGS ---
-  getSettings() {
+  async getSettings(): Promise<{ adminPhone: string }> {
+    if (isMongoConnected) {
+      let doc = await SettingsModel.findOne({}).lean();
+      if (!doc) {
+        doc = await SettingsModel.create({ adminPhone: '01120751465' });
+      }
+      return { adminPhone: doc.adminPhone };
+    }
     if (!dbCache.settings) {
       dbCache.settings = { adminPhone: '01120751465' };
     }
     return dbCache.settings;
   },
 
-  updateSettings(adminPhone: string) {
-    dbCache.settings = { adminPhone };
-    saveToDisk();
-    return dbCache.settings;
+  async updateSettings(adminPhone: string): Promise<{ adminPhone: string }> {
+    if (isMongoConnected) {
+      let doc = await SettingsModel.findOneAndUpdate(
+        {},
+        { $set: { adminPhone } },
+        { new: true, upsert: true }
+      ).lean();
+      return { adminPhone: doc.adminPhone };
+    } else {
+      dbCache.settings = { adminPhone };
+      saveToDisk();
+      return dbCache.settings;
+    }
   },
 
-  updateUserProfile(
+  async updateUserProfile(
     userId: string,
     phone: string,
     whatsapp: string,
     address: string,
     latitude?: number,
     longitude?: number
-  ): User {
-    const user = dbCache.users.find(u => u.id === userId);
-    if (!user) {
-      throw new Error('المستخدم غير موجود');
+  ): Promise<User> {
+    if (isMongoConnected) {
+      const doc = await UserModel.findOneAndUpdate(
+        { id: userId },
+        {
+          $set: {
+            phone,
+            whatsapp,
+            address,
+            ...(latitude !== undefined && { latitude }),
+            ...(longitude !== undefined && { longitude })
+          }
+        },
+        { new: true }
+      ).lean();
+      if (!doc) {
+        throw new Error('المستخدم غير موجود');
+      }
+      return doc as unknown as User;
+    } else {
+      const user = dbCache.users.find(u => u.id === userId);
+      if (!user) {
+        throw new Error('المستخدم غير موجود');
+      }
+      user.phone = phone;
+      user.whatsapp = whatsapp;
+      user.address = address;
+      if (latitude !== undefined) user.latitude = latitude;
+      if (longitude !== undefined) user.longitude = longitude;
+      saveToDisk();
+      return user;
     }
-    user.phone = phone;
-    user.whatsapp = whatsapp;
-    user.address = address;
-    if (latitude !== undefined) user.latitude = latitude;
-    if (longitude !== undefined) user.longitude = longitude;
-    saveToDisk();
-    return user;
   },
 
-  getStats() {
-    const totalOrders = dbCache.orders.length;
-    const totalRevenue = dbCache.orders
-      .filter(o => o.status === 'delivered')
-      .reduce((sum, o) => sum + o.total, 0);
-    const pendingOrders = dbCache.orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
-    const completedOrders = dbCache.orders.filter(o => o.status === 'delivered').length;
+  async getStats(): Promise<{ totalOrders: number; totalRevenue: number; pendingOrders: number; completedOrders: number }> {
+    if (isMongoConnected) {
+      const totalOrders = await OrderModel.countDocuments();
+      const deliveredOrders = await OrderModel.find({ status: 'delivered' }).lean();
+      const totalRevenue = deliveredOrders.reduce((sum, o) => sum + o.total, 0);
+      const pendingOrders = await OrderModel.countDocuments({ status: { $in: ['pending', 'preparing'] } });
+      const completedOrders = deliveredOrders.length;
 
-    return {
-      totalOrders,
-      totalRevenue,
-      pendingOrders,
-      completedOrders
-    };
+      return {
+        totalOrders,
+        totalRevenue,
+        pendingOrders,
+        completedOrders
+      };
+    } else {
+      const totalOrders = dbCache.orders.length;
+      const totalRevenue = dbCache.orders
+        .filter(o => o.status === 'delivered')
+        .reduce((sum, o) => sum + o.total, 0);
+      const pendingOrders = dbCache.orders.filter(o => o.status === 'pending' || o.status === 'preparing').length;
+      const completedOrders = dbCache.orders.filter(o => o.status === 'delivered').length;
+
+      return {
+        totalOrders,
+        totalRevenue,
+        pendingOrders,
+        completedOrders
+      };
+    }
   }
 };

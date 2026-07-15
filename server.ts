@@ -103,7 +103,7 @@ function notifyUserOfOrderStatus(userId: string, order: any) {
 // --- API ENDPOINTS ---
 
 // 1. Authentication
-app.post('/api/auth/login', (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
   const { username, password, isAdminLogin } = req.body;
 
   if (!username || username.trim() === '') {
@@ -114,34 +114,34 @@ app.post('/api/auth/login', (req, res) => {
 
   if (isAdminLogin) {
     if (trimmedUsername === 'Abu-Qura' && password === 'Abu-Qura123') {
-      const adminUser = DatabaseService.findUserByName('Abu-Qura');
+      const adminUser = await DatabaseService.findUserByName('Abu-Qura');
       return res.json({ success: true, user: adminUser });
     } else {
       return res.status(401).json({ error: 'خطأ في اسم المستخدم أو كلمة مرور المدير' });
     }
   } else {
     // Normal user: simple login/signup (checks if user exists, else registers them)
-    let user = DatabaseService.findUserByName(trimmedUsername);
+    let user = await DatabaseService.findUserByName(trimmedUsername);
     if (!user) {
-      user = DatabaseService.createUser(trimmedUsername);
+      user = await DatabaseService.createUser(trimmedUsername);
     }
     return res.json({ success: true, user });
   }
 });
 
 // 2. Fetch Menu Items & Menu management
-app.get('/api/menu', (req, res) => {
-  const menu = DatabaseService.getMenu();
+app.get('/api/menu', async (req, res) => {
+  const menu = await DatabaseService.getMenu();
   res.json(menu);
 });
 
-app.post('/api/menu', (req, res) => {
+app.post('/api/menu', async (req, res) => {
   try {
     const { nameAr, nameEn, descriptionAr, descriptionEn, price, image, category, available } = req.body;
     if (!nameAr || !price || !category) {
       return res.status(400).json({ error: 'الاسم بالعربية والسعر والجروب مطلوبين' });
     }
-    const newItem = DatabaseService.createMenuItem({
+    const newItem = await DatabaseService.createMenuItem({
       nameAr,
       nameEn: nameEn || nameAr,
       descriptionAr: descriptionAr || '',
@@ -157,11 +157,11 @@ app.post('/api/menu', (req, res) => {
   }
 });
 
-app.put('/api/menu/:id', (req, res) => {
+app.put('/api/menu/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { nameAr, nameEn, descriptionAr, descriptionEn, price, image, category, available } = req.body;
-    const updated = DatabaseService.updateMenuItem(id, {
+    const updated = await DatabaseService.updateMenuItem(id, {
       nameAr,
       nameEn,
       descriptionAr,
@@ -177,10 +177,10 @@ app.put('/api/menu/:id', (req, res) => {
   }
 });
 
-app.delete('/api/menu/:id', (req, res) => {
+app.delete('/api/menu/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    DatabaseService.deleteMenuItem(id);
+    await DatabaseService.deleteMenuItem(id);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -188,46 +188,46 @@ app.delete('/api/menu/:id', (req, res) => {
 });
 
 // Categories Endpoints
-app.get('/api/categories', (req, res) => {
+app.get('/api/categories', async (req, res) => {
   try {
-    const cats = DatabaseService.getCategories();
+    const cats = await DatabaseService.getCategories();
     res.json(cats);
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.post('/api/categories', (req, res) => {
+app.post('/api/categories', async (req, res) => {
   try {
     const { nameAr, nameEn } = req.body;
     if (!nameAr || !nameEn) {
       return res.status(400).json({ error: 'الاسم بالعربية والإنجليزية مطلوبين' });
     }
-    const newCat = DatabaseService.createCategory(nameAr, nameEn);
+    const newCat = await DatabaseService.createCategory(nameAr, nameEn);
     res.json({ success: true, category: newCat });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
   }
 });
 
-app.put('/api/categories/:id', (req, res) => {
+app.put('/api/categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
     const { nameAr, nameEn } = req.body;
     if (!nameAr || !nameEn) {
       return res.status(400).json({ error: 'الاسم بالعربية والإنجليزية مطلوبين' });
     }
-    const updatedCat = DatabaseService.updateCategory(id, nameAr, nameEn);
+    const updatedCat = await DatabaseService.updateCategory(id, nameAr, nameEn);
     res.json({ success: true, category: updatedCat });
   } catch (err: any) {
     res.status(404).json({ error: err.message });
   }
 });
 
-app.delete('/api/categories/:id', (req, res) => {
+app.delete('/api/categories/:id', async (req, res) => {
   try {
     const { id } = req.params;
-    DatabaseService.deleteCategory(id);
+    await DatabaseService.deleteCategory(id);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message });
@@ -235,16 +235,16 @@ app.delete('/api/categories/:id', (req, res) => {
 });
 
 // 3. Fetch Orders (For Admin or specific User)
-app.get('/api/orders', (req, res) => {
+app.get('/api/orders', async (req, res) => {
   const { userId, isAdmin } = req.query;
 
   if (isAdmin === 'true') {
-    const orders = DatabaseService.getOrders();
+    const orders = await DatabaseService.getOrders();
     return res.json(orders);
   }
 
   if (userId) {
-    const orders = DatabaseService.getUserOrders(userId as string);
+    const orders = await DatabaseService.getUserOrders(userId as string);
     return res.json(orders);
   }
 
@@ -252,7 +252,7 @@ app.get('/api/orders', (req, res) => {
 });
 
 // 4. Create New Order
-app.post('/api/orders', (req, res) => {
+app.post('/api/orders', async (req, res) => {
   const { userId, username, items, notes, phone, whatsapp, address, latitude, longitude } = req.body;
 
   if (!userId || !username || !items || !Array.isArray(items) || items.length === 0) {
@@ -260,7 +260,7 @@ app.post('/api/orders', (req, res) => {
   }
 
   try {
-    const newOrder = DatabaseService.createOrder(
+    const newOrder = await DatabaseService.createOrder(
       userId, 
       username, 
       items, 
@@ -282,7 +282,7 @@ app.post('/api/orders', (req, res) => {
 });
 
 // 5. Update Order Status (Admin Only)
-patchRoute('/api/orders/:id/status', (req, res) => {
+patchRoute('/api/orders/:id/status', async (req, res) => {
   const orderId = req.params.id;
   const { status } = req.body;
 
@@ -291,7 +291,7 @@ patchRoute('/api/orders/:id/status', (req, res) => {
   }
 
   try {
-    const updatedOrder = DatabaseService.updateOrderStatus(orderId, status as OrderStatus);
+    const updatedOrder = await DatabaseService.updateOrderStatus(orderId, status as OrderStatus);
 
     // Notify the user who placed this order
     notifyUserOfOrderStatus(updatedOrder.userId, updatedOrder);
@@ -303,10 +303,10 @@ patchRoute('/api/orders/:id/status', (req, res) => {
 });
 
 // Delete Order (Admin Only)
-app.delete('/api/orders/:id', (req, res) => {
+app.delete('/api/orders/:id', async (req, res) => {
   const orderId = req.params.id;
   try {
-    DatabaseService.deleteOrder(orderId);
+    await DatabaseService.deleteOrder(orderId);
     res.json({ success: true });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'حدث خطأ أثناء حذف الطلب' });
@@ -319,35 +319,35 @@ function patchRoute(routePath: string, handler: express.RequestHandler) {
 }
 
 // 6. Fetch Dashboard Stats (Admin Only)
-app.get('/api/stats', (req, res) => {
-  const stats = DatabaseService.getStats();
+app.get('/api/stats', async (req, res) => {
+  const stats = await DatabaseService.getStats();
   res.json(stats);
 });
 
 // 7. Get General Restaurant Settings
-app.get('/api/settings', (req, res) => {
-  const settings = DatabaseService.getSettings();
+app.get('/api/settings', async (req, res) => {
+  const settings = await DatabaseService.getSettings();
   res.json(settings);
 });
 
 // 8. Update General Restaurant Settings (Admin Only)
-app.post('/api/settings', (req, res) => {
+app.post('/api/settings', async (req, res) => {
   const { adminPhone } = req.body;
   if (!adminPhone || adminPhone.trim() === '') {
     return res.status(400).json({ error: 'رقم هاتف المدير مطلوب' });
   }
-  const settings = DatabaseService.updateSettings(adminPhone.trim());
+  const settings = await DatabaseService.updateSettings(adminPhone.trim());
   res.json({ success: true, settings });
 });
 
 // 9. Update User Profile Defaults
-app.post('/api/user/profile', (req, res) => {
+app.post('/api/user/profile', async (req, res) => {
   const { userId, phone, whatsapp, address, latitude, longitude } = req.body;
   if (!userId) {
     return res.status(400).json({ error: 'معرف المستخدم مطلوب' });
   }
   try {
-    const updatedUser = DatabaseService.updateUserProfile(userId, phone, whatsapp, address, latitude, longitude);
+    const updatedUser = await DatabaseService.updateUserProfile(userId, phone, whatsapp, address, latitude, longitude);
     res.json({ success: true, user: updatedUser });
   } catch (err: any) {
     res.status(500).json({ error: err.message || 'حدث خطأ أثناء تحديث بيانات الحساب' });
