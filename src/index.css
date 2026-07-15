@@ -1,0 +1,52 @@
+@import url('https://fonts.googleapis.com/css2?family=Amiri:ital,wght@0,400;0,700;1,400;1,700&family=Cairo:wght@300;400;500;600;700;800;900&family=Playfair+Display:ital,wght@0,400..900;1,400..900&family=Inter:wght@300;400;500;600;700&display=swap');
+@import "tailwindcss";
+
+@theme {
+  --font-sans: "Cairo", "Inter", ui-sans-serif, system-ui, sans-serif;
+  --font-serif: "Amiri", "Playfair Display", "Georgia", ui-serif, serif;
+  --color-brand-primary: #3D4021;     /* Rich Warm Olive Green */
+  --color-brand-primary-light: #4D5129; /* Lighter Warm Olive */
+  --color-brand-gold: #D97706;        /* Warm Amber / Earthy Gold */
+  --color-brand-gold-dark: #B45309;   /* Deeper bronze amber */
+  --color-brand-clay: #C2410C;        /* Terracotta Rust */
+}
+
+/* Custom scrollbars and transition defaults */
+::-webkit-scrollbar {
+  width: 6px;
+  height: 6px;
+}
+
+::-webkit-scrollbar-track {
+  background: #F1EFE7;
+}
+
+::-webkit-scrollbar-thumb {
+  background: rgba(61, 64, 33, 0.2);
+  border-radius: 4px;
+}
+
+::-webkit-scrollbar-thumb:hover {
+  background: rgba(61, 64, 33, 0.4);
+}
+
+body {
+  font-family: var(--font-sans);
+  background-color: #FAF9F6; /* Soft warm ivory */
+  color: #2D241E; /* Organic dark espresso charcoal text */
+  overflow-x: hidden;
+}
+
+/* Custom ambient gold glow */
+.gold-glow {
+  text-shadow: 0 0 10px rgba(217, 119, 6, 0.2);
+}
+
+/* Smooth active button tap scaling */
+.tap-scale {
+  transition: transform 0.1s ease;
+}
+.tap-scale:active {
+  transform: scale(0.96);
+}
+
