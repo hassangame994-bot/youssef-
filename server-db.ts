@@ -1,3 +1,4 @@
+import 'dotenv/config';
 import fs from 'fs';
 import path from 'path';
 import crypto from 'crypto';
@@ -255,6 +256,8 @@ const UserSchema = new mongoose.Schema({
   latitude: Number,
   longitude: Number
 });
+UserSchema.index({ id: 1 }, { unique: true });
+UserSchema.index({ username: 1 }, { unique: true });
 const UserModel = (mongoose.models.User || mongoose.model('User', UserSchema)) as any;
 
 // 2. Category Schema
@@ -263,6 +266,7 @@ const CategorySchema = new mongoose.Schema({
   nameAr: { type: String, required: true },
   nameEn: { type: String, required: true }
 });
+CategorySchema.index({ id: 1 }, { unique: true });
 const CategoryModel = (mongoose.models.Category || mongoose.model('Category', CategorySchema)) as any;
 
 // 3. MenuItem Schema
@@ -277,6 +281,8 @@ const MenuItemSchema = new mongoose.Schema({
   category: { type: String, required: true },
   available: { type: Boolean, default: true }
 });
+MenuItemSchema.index({ id: 1 }, { unique: true });
+MenuItemSchema.index({ category: 1 });
 const MenuItemModel = (mongoose.models.MenuItem || mongoose.model('MenuItem', MenuItemSchema)) as any;
 
 // 4. Order Schema
@@ -296,6 +302,9 @@ const OrderSchema = new mongoose.Schema({
   latitude: Number,
   longitude: Number
 });
+OrderSchema.index({ id: 1 }, { unique: true });
+OrderSchema.index({ userId: 1, createdAt: -1 });
+OrderSchema.index({ createdAt: -1 });
 const OrderModel = (mongoose.models.Order || mongoose.model('Order', OrderSchema)) as any;
 
 // 5. Settings Schema
@@ -344,14 +353,38 @@ async function seedMongoData() {
 }
 
 if (MONGODB_URI) {
-  mongoose.connect(MONGODB_URI)
+  // Production-grade connection pooling and resilience configuration
+  const connectionOptions = {
+    maxPoolSize: 100,             // Support up to 100 concurrent DB socket connections under heavy load
+    minPoolSize: 10,              // Keep 10 connections warm to avoid initial handshake latency spikes
+    socketTimeoutMS: 45000,       // Terminate inactive sockets after 45 seconds
+    serverSelectionTimeoutMS: 10000, // Timeout after 10s if the cluster is unreachable (prevents infinite hanging)
+    heartbeatFrequencyMS: 10000,  // Check MongoDB cluster health every 10 seconds
+    retryWrites: true,            // Automatically retry failed write operations
+    retryReads: true,             // Automatically retry failed read operations
+  };
+
+  // Configure connection lifecycle events for real-time visibility
+  mongoose.connection.on('connected', () => {
+    console.log('✅ Mongoose connection established to persistent cloud MongoDB Cluster.');
+    isMongoConnected = true;
+  });
+
+  mongoose.connection.on('error', (err) => {
+    console.error('❌ Mongoose connection error under heavy load:', err);
+  });
+
+  mongoose.connection.on('disconnected', () => {
+    console.warn('⚠️ Mongoose connection lost! Mongoose will automatically attempt reconnecting...');
+    isMongoConnected = false;
+  });
+
+  mongoose.connect(MONGODB_URI, connectionOptions)
     .then(async () => {
-      console.log('✅ Connected successfully to persistent cloud MongoDB Cluster.');
-      isMongoConnected = true;
       await seedMongoData();
     })
     .catch((err) => {
-      console.error('❌ Failed to connect to MongoDB, falling back to local file-system JSON database:', err);
+      console.error('❌ Failed to establish initial connection to MongoDB. Falling back to local filesystem:', err);
       isMongoConnected = false;
     });
 } else {
@@ -364,7 +397,7 @@ if (MONGODB_URI) {
 export const DatabaseService = {
   // --- USERS ---
   async getUsers(): Promise<User[]> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const docs = await UserModel.find({}).lean();
       return docs as unknown as User[];
     }
@@ -372,7 +405,7 @@ export const DatabaseService = {
   },
 
   async findUserByName(username: string): Promise<User | undefined> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await UserModel.findOne({ username: { $regex: new RegExp(`^${username}$`, 'i') } }).lean();
       return doc ? (doc as unknown as User) : undefined;
     }
@@ -380,7 +413,7 @@ export const DatabaseService = {
   },
 
   async findUserById(id: string): Promise<User | undefined> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await UserModel.findOne({ id }).lean();
       return doc ? (doc as unknown as User) : undefined;
     }
@@ -399,7 +432,7 @@ export const DatabaseService = {
       createdAt: new Date().toISOString()
     };
 
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await UserModel.create(newUser);
     } else {
       dbCache.users.push(newUser);
@@ -410,7 +443,7 @@ export const DatabaseService = {
 
   // --- MENU ---
   async getMenu(): Promise<MenuItem[]> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const docs = await MenuItemModel.find({}).lean();
       return docs as unknown as MenuItem[];
     }
@@ -423,7 +456,7 @@ export const DatabaseService = {
       id: 'm_' + crypto.randomBytes(5).toString('hex')
     };
 
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await MenuItemModel.create(newItem);
     } else {
       dbCache.menu.push(newItem);
@@ -433,7 +466,7 @@ export const DatabaseService = {
   },
 
   async updateMenuItem(id: string, updated: Partial<MenuItem>): Promise<MenuItem> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await MenuItemModel.findOneAndUpdate(
         { id },
         { $set: updated },
@@ -459,7 +492,7 @@ export const DatabaseService = {
   },
 
   async deleteMenuItem(id: string): Promise<void> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await MenuItemModel.deleteOne({ id });
     } else {
       dbCache.menu = dbCache.menu.filter(item => item.id !== id);
@@ -469,7 +502,7 @@ export const DatabaseService = {
 
   // --- CATEGORIES ---
   async getCategories(): Promise<Category[]> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const docs = await CategoryModel.find({}).lean();
       return docs as unknown as Category[];
     }
@@ -483,7 +516,7 @@ export const DatabaseService = {
     const id = 'cat_' + crypto.randomBytes(5).toString('hex');
     const newCategory: Category = { id, nameAr, nameEn };
 
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await CategoryModel.create(newCategory);
     } else {
       if (!dbCache.categories) {
@@ -496,7 +529,7 @@ export const DatabaseService = {
   },
 
   async updateCategory(id: string, nameAr: string, nameEn: string): Promise<Category> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await CategoryModel.findOneAndUpdate(
         { id },
         { $set: { nameAr, nameEn } },
@@ -521,7 +554,7 @@ export const DatabaseService = {
   },
 
   async deleteCategory(id: string): Promise<void> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await CategoryModel.deleteOne({ id });
     } else {
       if (!dbCache.categories) {
@@ -534,7 +567,7 @@ export const DatabaseService = {
 
   // --- ORDERS ---
   async getOrders(): Promise<Order[]> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const docs = await OrderModel.find({}).sort({ createdAt: -1 }).lean();
       return docs as unknown as Order[];
     }
@@ -542,7 +575,7 @@ export const DatabaseService = {
   },
 
   async getUserOrders(userId: string): Promise<Order[]> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const docs = await OrderModel.find({ userId }).sort({ createdAt: -1 }).lean();
       return docs as unknown as Order[];
     }
@@ -597,7 +630,7 @@ export const DatabaseService = {
       longitude
     };
 
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await OrderModel.create(newOrder);
       await UserModel.findOneAndUpdate(
         { id: userId },
@@ -628,7 +661,7 @@ export const DatabaseService = {
   },
 
   async updateOrderStatus(orderId: string, status: OrderStatus): Promise<Order> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await OrderModel.findOneAndUpdate(
         { id: orderId },
         { $set: { status, updatedAt: new Date().toISOString() } },
@@ -651,7 +684,7 @@ export const DatabaseService = {
   },
 
   async deleteOrder(orderId: string): Promise<void> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       await OrderModel.deleteOne({ id: orderId });
     } else {
       dbCache.orders = dbCache.orders.filter(o => o.id !== orderId);
@@ -661,7 +694,7 @@ export const DatabaseService = {
 
   // --- SETTINGS ---
   async getSettings(): Promise<{ adminPhone: string }> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       let doc = await SettingsModel.findOne({}).lean();
       if (!doc) {
         doc = await SettingsModel.create({ adminPhone: '01120751465' });
@@ -675,7 +708,7 @@ export const DatabaseService = {
   },
 
   async updateSettings(adminPhone: string): Promise<{ adminPhone: string }> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       let doc = await SettingsModel.findOneAndUpdate(
         {},
         { $set: { adminPhone } },
@@ -697,7 +730,7 @@ export const DatabaseService = {
     latitude?: number,
     longitude?: number
   ): Promise<User> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const doc = await UserModel.findOneAndUpdate(
         { id: userId },
         {
@@ -731,7 +764,7 @@ export const DatabaseService = {
   },
 
   async getStats(): Promise<{ totalOrders: number; totalRevenue: number; pendingOrders: number; completedOrders: number }> {
-    if (isMongoConnected) {
+    if (MONGODB_URI) {
       const totalOrders = await OrderModel.countDocuments();
       const deliveredOrders = await OrderModel.find({ status: 'delivered' }).lean();
       const totalRevenue = deliveredOrders.reduce((sum, o) => sum + o.total, 0);
