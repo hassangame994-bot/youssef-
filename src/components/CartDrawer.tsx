@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
 import { X, ShoppingBag, Plus, Minus, Trash2, Loader2, ArrowLeft, ArrowRight, MessageSquareCode, Phone, MapPin, Compass, Star, Map } from 'lucide-react';
-import { CartItem, MenuItem, User } from '../types.js';
+import { CartItem, MenuItem, User, Order } from '../types.js';
 
 interface CartDrawerProps {
   isOpen: boolean;
@@ -12,7 +12,7 @@ interface CartDrawerProps {
   user: User | null;
   onOpenAuth: () => void;
   lang: 'ar' | 'en';
-  onOrderSuccess: (updatedUser?: User) => void;
+  onOrderSuccess: (updatedUser?: User, newOrder?: Order) => void;
 }
 
 export default function CartDrawer({
@@ -337,7 +337,7 @@ export default function CartDrawer({
       // Clear local state
       setNotes('');
       onClearCart();
-      onOrderSuccess(updatedUser);
+      onOrderSuccess(updatedUser, data.order);
       onClose();
     } catch (err: any) {
       setError(err.message || (isAr ? 'عذراً، حدث خطأ أثناء إتمام الطلب' : 'Checkout failed'));

@@ -10,6 +10,7 @@ import AdminDashboard from './components/AdminDashboard.js';
 import BottomNavigation from './components/BottomNavigation.js';
 import MealCustomizationModal from './components/MealCustomizationModal.js';
 import { playNotificationChime, playStatusUpdateChime } from './utils/audio.js';
+import { io } from 'socket.io-client';
 
 interface ToastAlert {
   id: string;
@@ -32,6 +33,7 @@ export default function App() {
   const [loadingOrders, setLoadingOrders] = useState(false);
   const [toasts, setToasts] = useState<ToastAlert[]>([]);
   const [customizingMenuItem, setCustomizingMenuItem] = useState<MenuItem | null>(null);
+  const [isAdminRoute, setIsAdminRoute] = useState(false);
 
   const isAr = lang === 'ar';
 
@@ -87,6 +89,12 @@ export default function App() {
       }
     }
 
+    const path = window.location.pathname.toLowerCase().replace(/\/$/, '');
+    if (path === '/admin_abu_qura_user') {
+      setIsAdminRoute(true);
+      setAuthOpen(true);
+    }
+
     fetchMenu();
     fetchCategories();
   }, []);
@@ -115,80 +123,176 @@ export default function App() {
     fetchOrders();
   }, [user, currentTab]);
 
-  // 3. Setup Live Real-time SSE listener
+  // 3. Setup Live Real-time Socket.io & SSE Sync Engine
   useEffect(() => {
-    if (!user) return;
-
-    const queryParams = new URLSearchParams({
-      userId: user.id,
-      isAdmin: user.role === 'admin' ? 'true' : 'false'
+    // Establish auto-reconnecting socket tunnel with fallback transports and high resiliency
+    const socket = io({
+      query: {
+        userId: user?.id || '',
+        isAdmin: user?.role === 'admin' ? 'true' : 'false'
+      },
+      transports: ['websocket', 'polling'],
+      reconnection: true,
+      reconnectionAttempts: Infinity,
+      reconnectionDelay: 1000,
+      reconnectionDelayMax: 5000,
+      timeout: 20000,
     });
 
-    const eventSource = new EventSource(`/api/events?${queryParams.toString()}`);
+    socket.on('connect', () => {
+      console.log('📡 [Socket.io] Live real-time sync tunnel connected.');
+    });
 
-    eventSource.addEventListener('new-order', (event: any) => {
+    socket.on('connect_error', (error) => {
+      console.warn('⚠️ [Socket.io] Connection error, attempting fallback transports...', error);
+    });
+
+    socket.on('new-order', (newOrder: Order) => {
       try {
-        const newOrder = JSON.parse(event.data) as Order;
-        
-        // Append order to local admin list
-        setOrders((prev) => [newOrder, ...prev]);
-        
-        // Play synthetic chime notification!
-        playNotificationChime();
+        if (!user || user.role !== 'admin') return;
 
-        // Trigger gorgeous toaster popup alert
-        addToast(
-          isAr ? '🔔 طلب كباب ومأكولات جديد!' : '🔔 New Delicious Order!',
-          isAr 
-            ? `وصل للتو طلب جديد من العميل (${newOrder.username}) بقيمة ${newOrder.total} ج.م` 
-            : `New order received from client (${newOrder.username}) totaling ${newOrder.total} EGP`,
-          'success'
-        );
+        // Idempotent protection: check if order already exists in state
+        let wasAdded = false;
+        setOrders((prev) => {
+          if (prev.some((o) => o.id === newOrder.id)) return prev;
+          wasAdded = true;
+          return [newOrder, ...prev];
+        });
+
+        // Only play sound & toast if it was actually added as a new element
+        setTimeout(() => {
+          if (wasAdded) {
+            playNotificationChime();
+            addToast(
+              isAr ? '🔔 طلب كباب ومأكولات جديد!' : '🔔 New Delicious Order!',
+              isAr 
+                ? `وصل للتو طلب جديد من العميل (${newOrder.username}) بقيمة ${newOrder.total} ج.م` 
+                : `New order received from client (${newOrder.username}) totaling ${newOrder.total} EGP`,
+              'success'
+            );
+          }
+        }, 50);
       } catch (err) {
-        console.error('Error parsing SSE new-order event:', err);
+        console.error('Error handling Socket.io new-order event:', err);
       }
     });
 
-    eventSource.addEventListener('order-status-updated', (event: any) => {
+    socket.on('order-status-updated', (updatedOrder: Order) => {
       try {
-        const updatedOrder = JSON.parse(event.data) as Order;
-        
-        // Update order status locally in user list
-        setOrders((prev) => 
-          prev.map((o) => o.id === updatedOrder.id ? updatedOrder : o)
-        );
+        if (!user) return;
 
-        const statusAr = updatedOrder.status === 'preparing' 
-          ? 'جاري تحضيره وطهيه الآن في المطبخ 🍳' 
-          : updatedOrder.status === 'delivered' 
-          ? 'تم توصيله لك بالهناء والشفاء! 🛵' 
-          : 'نعتذر بشدة، تم رفض الطلب ❌';
+        let isUpdated = false;
+        setOrders((prev) => {
+          const exists = prev.find((o) => o.id === updatedOrder.id);
+          if (exists) {
+            if (exists.status === updatedOrder.status) return prev;
+            isUpdated = true;
+            return prev.map((o) => o.id === updatedOrder.id ? updatedOrder : o);
+          } else {
+            const shouldAdd = user?.role === 'admin' || updatedOrder.userId === user?.id;
+            if (shouldAdd) {
+              isUpdated = true;
+              return [updatedOrder, ...prev];
+            }
+            return prev;
+          }
+        });
 
-        const statusEn = updatedOrder.status === 'preparing'
-          ? 'is being prepared and cooked now! 🍳'
-          : updatedOrder.status === 'delivered'
-          ? 'has been delivered! Enjoy your meal! 🛵'
-          : 'has been rejected due to busy hours ❌';
+        setTimeout(() => {
+          if (isUpdated) {
+            const statusAr = updatedOrder.status === 'preparing' 
+              ? 'جاري تحضيره وطهيه الآن في المطبخ 🍳' 
+              : updatedOrder.status === 'delivered' 
+              ? 'تم توصيله لك بالهناء والشفاء! 🛵' 
+              : 'نعتذر بشدة، تم رفض الطلب ❌';
 
-        // Play positive or warning tone based on status
-        playStatusUpdateChime(updatedOrder.status !== 'rejected');
+            const statusEn = updatedOrder.status === 'preparing'
+              ? 'is being prepared and cooked now! 🍳'
+              : updatedOrder.status === 'delivered'
+              ? 'has been delivered! Enjoy your meal! 🛵'
+              : 'has been rejected due to busy hours ❌';
 
-        addToast(
-          isAr ? '👨‍🍳 تحديث حالة طلبك' : '👨‍🍳 Order Status Update',
-          isAr 
-            ? `طلبك رقم #${updatedOrder.id} ${statusAr}` 
-            : `Your order #${updatedOrder.id} ${statusEn}`,
-          updatedOrder.status === 'rejected' ? 'warning' : 'info'
-        );
+            playStatusUpdateChime(updatedOrder.status !== 'rejected');
+
+            addToast(
+              isAr ? '👨‍🍳 تحديث حالة طلبك' : '👨‍🍳 Order Status Update',
+              isAr 
+                ? `طلبك رقم #${updatedOrder.id} ${statusAr}` 
+                : `Your order #${updatedOrder.id} ${statusEn}`,
+              updatedOrder.status === 'rejected' ? 'warning' : 'info'
+            );
+          }
+        }, 50);
       } catch (err) {
-        console.error('Error parsing SSE order-status event:', err);
+        console.error('Error handling Socket.io order-status event:', err);
       }
     });
+
+    socket.on('order-deleted', (deletedOrderId: string) => {
+      try {
+        if (!user) return;
+        setOrders((prev) => prev.filter((o) => o.id !== deletedOrderId));
+        console.log(`🗑️ [Socket.io] Order ${deletedOrderId} deleted on server, sync complete.`);
+      } catch (err) {
+        console.error('Error handling Socket.io order-deleted event:', err);
+      }
+    });
+
+    socket.on('menu-updated', () => {
+      console.log('🍔 [Socket.io] Menu updated on server. Fetching latest menu...');
+      fetchMenu();
+    });
+
+    socket.on('categories-updated', () => {
+      console.log('📂 [Socket.io] Categories updated on server. Fetching latest categories...');
+      fetchCategories();
+    });
+
+    // Secondary redundant SSE fallback (only for logged-in users)
+    let eventSource: EventSource | null = null;
+    if (user) {
+      const queryParams = new URLSearchParams({
+        userId: user.id,
+        isAdmin: user.role === 'admin' ? 'true' : 'false'
+      });
+
+      eventSource = new EventSource(`/api/events?${queryParams.toString()}`);
+
+      eventSource.addEventListener('new-order', (event: any) => {
+        try {
+          if (user?.role !== 'admin') return;
+          const newOrder = JSON.parse(event.data) as Order;
+          setOrders((prev) => {
+            if (prev.some((o) => o.id === newOrder.id)) return prev;
+            return [newOrder, ...prev];
+          });
+        } catch (err) {}
+      });
+
+      eventSource.addEventListener('order-status-updated', (event: any) => {
+        try {
+          const updatedOrder = JSON.parse(event.data) as Order;
+          setOrders((prev) => {
+            const exists = prev.find((o) => o.id === updatedOrder.id);
+            if (exists) {
+              return prev.map((o) => o.id === updatedOrder.id ? updatedOrder : o);
+            } else {
+              const shouldAdd = user?.role === 'admin' || updatedOrder.userId === user?.id;
+              return shouldAdd ? [updatedOrder, ...prev] : prev;
+            }
+          });
+        } catch (err) {}
+      });
+    }
 
     return () => {
-      eventSource.close();
+      socket.disconnect();
+      if (eventSource) {
+        eventSource.close();
+      }
     };
   }, [user, lang]);
+
 
   // Auth operations
   const handleAuthSuccess = (authUser: User) => {
@@ -375,6 +479,7 @@ export default function App() {
         onClose={() => setAuthOpen(false)}
         onSuccess={handleAuthSuccess}
         lang={lang}
+        allowAdmin={isAdminRoute || user?.role === 'admin'}
       />
 
       {/* Customization modal for meals toppings and rating */}
@@ -428,7 +533,17 @@ export default function App() {
           setAuthOpen(true);
         }}
         lang={lang}
-        onOrderSuccess={() => {
+        onOrderSuccess={(updatedUser, newOrder) => {
+          if (updatedUser) {
+            setUser(updatedUser);
+            localStorage.setItem('abu_qura_user', JSON.stringify(updatedUser));
+          }
+          if (newOrder) {
+            setOrders((prev) => {
+              if (prev.some((o) => o.id === newOrder.id)) return prev;
+              return [newOrder, ...prev];
+            });
+          }
           addToast(
             isAr ? '🎉 تم إرسال طلبك للمطبخ!' : '🎉 Order sent to Kitchen!',
             isAr 
@@ -437,6 +552,7 @@ export default function App() {
             'success'
           );
           setCurrentTab('orders');
+          fetchOrders(); // Robust instant double-guarantee
         }}
       />
 

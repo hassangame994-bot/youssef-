@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { X, Shield, User, Loader2, KeyRound } from 'lucide-react';
 import { User as UserType } from '../types.js';
 
@@ -7,15 +7,22 @@ interface AuthModalProps {
   onClose: () => void;
   onSuccess: (user: UserType) => void;
   lang: 'ar' | 'en';
+  allowAdmin?: boolean;
 }
 
-export default function AuthModal({ isOpen, onClose, onSuccess, lang }: AuthModalProps) {
+export default function AuthModal({ isOpen, onClose, onSuccess, lang, allowAdmin = false }: AuthModalProps) {
   const isAr = lang === 'ar';
-  const [isAdminMode, setIsAdminMode] = useState(false);
+  const [isAdminMode, setIsAdminMode] = useState(allowAdmin);
   const [username, setUsername] = useState('');
   const [password, setPassword] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState('');
+
+  useEffect(() => {
+    if (isOpen) {
+      setIsAdminMode(allowAdmin);
+    }
+  }, [isOpen, allowAdmin]);
 
   if (!isOpen) return null;
 
@@ -87,40 +94,42 @@ export default function AuthModal({ isOpen, onClose, onSuccess, lang }: AuthModa
         </div>
 
         {/* Toggle Mode */}
-        <div className="px-6 py-2">
-          <div className="flex bg-gray-100 p-1 rounded-2xl">
-            <button
-              type="button"
-              onClick={() => {
-                setIsAdminMode(false);
-                setError('');
-              }}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 ${
-                !isAdminMode 
-                  ? 'bg-white text-brand-primary shadow-xs' 
-                  : 'text-gray-500 hover:text-gray-900'
-              }`}
-            >
-              <User className="w-4 h-4" />
-              <span>{isAr ? 'تسجيل دخول عميل' : 'Customer Access'}</span>
-            </button>
-            <button
-              type="button"
-              onClick={() => {
-                setIsAdminMode(true);
-                setError('');
-              }}
-              className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 ${
-                isAdminMode 
-                  ? 'bg-brand-primary text-brand-gold shadow-xs' 
-                  : 'text-gray-500 hover:text-gray-900'
-              }`}
-            >
-              <Shield className="w-4 h-4 text-brand-gold" />
-              <span>{isAr ? 'مدير المطعم (الأدمين)' : 'Admin Portal'}</span>
-            </button>
+        {allowAdmin && (
+          <div className="px-6 py-2">
+            <div className="flex bg-gray-100 p-1 rounded-2xl">
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdminMode(false);
+                  setError('');
+                }}
+                className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 ${
+                  !isAdminMode 
+                    ? 'bg-white text-brand-primary shadow-xs' 
+                    : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                <User className="w-4 h-4" />
+                <span>{isAr ? 'تسجيل دخول عميل' : 'Customer Access'}</span>
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  setIsAdminMode(true);
+                  setError('');
+                }}
+                className={`flex-1 py-2.5 text-xs font-bold rounded-xl transition-all duration-200 flex items-center justify-center gap-2 ${
+                  isAdminMode 
+                    ? 'bg-brand-primary text-brand-gold shadow-xs' 
+                    : 'text-gray-500 hover:text-gray-900'
+                }`}
+              >
+                <Shield className="w-4 h-4 text-brand-gold" />
+                <span>{isAr ? 'مدير المطعم (الأدمين)' : 'Admin Portal'}</span>
+              </button>
+            </div>
           </div>
-        </div>
+        )}
 
         {/* Form */}
         <form onSubmit={handleSubmit} className="p-6 space-y-4">
